@@ -41,7 +41,7 @@ const styles = StyleSheet.create({
   },
   content: {
     paddingHorizontal: 24,
-    paddingTop: 70,
+    paddingTop: 20,
     paddingBottom: 120,
   },
   eyebrow: {

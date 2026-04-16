@@ -6,6 +6,7 @@ interface UserRecipe {
   title: string;
   meta: string;
   accent: string;
+  createdBy?: string;
   prepTime?: number;
   cookTime?: number;
   ingredients?: string[];
@@ -48,6 +49,7 @@ export function MyRecipesScreen({ recipes, favoriteRecipeId, onRecipePress }: My
                 {isFavorite ? <Text style={styles.favoriteBadge}>Favorite</Text> : null}
               </View>
               <Text style={styles.recipeMeta}>{recipe.meta}</Text>
+              {recipe.createdBy ? <Text style={styles.recipeOwner}>Shared by {recipe.createdBy}</Text> : null}
               <Text style={styles.recipeAccent}>{recipe.accent}</Text>
             </TouchableOpacity>
           );
@@ -64,7 +66,7 @@ const styles = StyleSheet.create({
   },
   content: {
     paddingHorizontal: 24,
-    paddingTop: 70,
+    paddingTop: 20,
     paddingBottom: 120,
   },
   eyebrow: {
@@ -142,6 +144,12 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     textTransform: 'uppercase',
     letterSpacing: 1,
+  },
+  recipeOwner: {
+    marginTop: 6,
+    color: '#0077b6',
+    fontSize: 12,
+    fontWeight: '700',
   },
   recipeAccent: {
     marginTop: 8,

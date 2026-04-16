@@ -9,6 +9,8 @@ interface UserProfile {
 	bio: string;
 	photoUrl: string;
 	favoriteRecipeId: string | null;
+	householdName: string;
+	isHouseholdOwner: boolean;
 }
 
 interface UserRecipe {
@@ -18,15 +20,23 @@ interface UserRecipe {
 
 interface ProfileScreenProps {
 	profile: UserProfile;
+	householdMembers: string[];
+	householdInviteCode: string;
 	recipes: UserRecipe[];
-	onProfileChange: (nextValues: { name: string; bio: string; photoUrl: string }) => void;
+	onProfileChange: (nextValues: { name: string; bio: string; photoUrl: string; householdName: string }) => void;
+	onAcceptHouseholdInvite: (inviteCode: string, inviteeName: string) => { ok: boolean; message: string };
+	onRegenerateInviteCode: () => void;
 	onFavoriteRecipeChange: (recipeId: string | null) => void;
 }
 
 export function ProfileScreen({
 	profile,
+	householdMembers,
+	householdInviteCode,
 	recipes,
 	onProfileChange,
+	onAcceptHouseholdInvite,
+	onRegenerateInviteCode,
 	onFavoriteRecipeChange,
 }: ProfileScreenProps) {
 	const favoriteRecipe = recipes.find((recipe) => recipe.id === profile.favoriteRecipeId) ?? null;
@@ -34,6 +44,9 @@ export function ProfileScreen({
 	const [editName, setEditName] = useState(profile.name);
 	const [editBio, setEditBio] = useState(profile.bio);
 	const [editPhotoUrl, setEditPhotoUrl] = useState(profile.photoUrl);
+	const [editHouseholdName, setEditHouseholdName] = useState(profile.householdName);
+	const [inviteeName, setInviteeName] = useState('');
+	const [inviteCodeInput, setInviteCodeInput] = useState('');
 
 	const handlePickImage = async () => {
 		const result = await ImagePicker.launchImageLibraryAsync({
@@ -53,6 +66,7 @@ export function ProfileScreen({
 			name: editName.trim() || profile.name,
 			bio: editBio.trim(),
 			photoUrl: editPhotoUrl,
+			householdName: editHouseholdName.trim() || profile.householdName,
 		});
 		setIsEditMode(false);
 	};
@@ -61,12 +75,24 @@ export function ProfileScreen({
 		setEditName(profile.name);
 		setEditBio(profile.bio);
 		setEditPhotoUrl(profile.photoUrl);
+		setEditHouseholdName(profile.householdName);
+		setInviteeName('');
+		setInviteCodeInput('');
 		setIsEditMode(false);
+	};
+
+	const handleAcceptInvite = () => {
+		const result = onAcceptHouseholdInvite(inviteCodeInput, inviteeName);
+		Alert.alert(result.ok ? 'Invite accepted' : 'Invite failed', result.message);
+		if (result.ok) {
+			setInviteeName('');
+			setInviteCodeInput('');
+		}
 	};
 
 	if (isEditMode) {
 		return (
-			<SafeAreaView style={styles.screen}>
+			<SafeAreaView style={styles.screen} edges={['left', 'right']}>
 				<View style={styles.editHeader}>
 					<Text style={styles.editTitle}>Edit profile</Text>
 					<View style={styles.editHeaderButtons}>
@@ -113,6 +139,57 @@ export function ProfileScreen({
 							value={editBio}
 							onChangeText={setEditBio}
 						/>
+
+						<Text style={styles.editLabel}>Household name</Text>
+						<TextInput
+							style={[styles.editInput, !profile.isHouseholdOwner ? styles.disabledInput : null]}
+							placeholder="Your household"
+							placeholderTextColor="#9ca3af"
+							value={editHouseholdName}
+							editable={profile.isHouseholdOwner}
+							onChangeText={setEditHouseholdName}
+						/>
+						{!profile.isHouseholdOwner ? <Text style={styles.memberRestrictionText}>Only the household owner can rename the household.</Text> : null}
+
+						<Text style={styles.editLabel}>Invite code</Text>
+						<View style={styles.inviteCodeRow}>
+							<Text style={styles.inviteCodeValue}>{householdInviteCode}</Text>
+							{profile.isHouseholdOwner ? (
+								<TouchableOpacity style={styles.regenerateButton} activeOpacity={0.85} onPress={onRegenerateInviteCode}>
+									<Text style={styles.regenerateButtonText}>New code</Text>
+								</TouchableOpacity>
+							) : null}
+						</View>
+						<Text style={styles.inviteHint}>Share this code so someone can join your household.</Text>
+
+						<Text style={styles.editLabel}>Accept invite into household</Text>
+						<TextInput
+							style={styles.editInput}
+							placeholder="Invitee name"
+							placeholderTextColor="#9ca3af"
+							value={inviteeName}
+							onChangeText={setInviteeName}
+						/>
+						<TextInput
+							style={styles.editInput}
+							placeholder="Invite code"
+							placeholderTextColor="#9ca3af"
+							autoCapitalize="characters"
+							value={inviteCodeInput}
+							onChangeText={setInviteCodeInput}
+						/>
+						<TouchableOpacity style={styles.addMemberButton} activeOpacity={0.85} onPress={handleAcceptInvite}>
+							<Text style={styles.addMemberButtonText}>Accept invite</Text>
+						</TouchableOpacity>
+
+						<Text style={styles.editLabel}>Household roster</Text>
+						<View style={styles.memberList}>
+							{householdMembers.map((member, index) => (
+								<View key={member} style={styles.memberChip}>
+									<Text style={styles.memberChipText}>{index === 0 ? `${member} (owner)` : member}</Text>
+								</View>
+							))}
+						</View>
 					</View>
 				</ScrollView>
 			</SafeAreaView>
@@ -120,7 +197,7 @@ export function ProfileScreen({
 	}
 
 	return (
-		<SafeAreaView style={styles.screen}>
+		<SafeAreaView style={styles.screen} edges={['left', 'right']}>
 			<View style={styles.viewHeader}>
 				<View>
 					<Text style={styles.eyebrow}>Profile</Text>
@@ -143,8 +220,21 @@ export function ProfileScreen({
 						)}
 						<View style={styles.profileInfo}>
 							<Text style={styles.profileName}>{profile.name}</Text>
+							<Text style={styles.householdText}>{profile.householdName}</Text>
 							{profile.bio ? <Text style={styles.profileBio}>{profile.bio}</Text> : null}
 						</View>
+					</View>
+				</View>
+
+				<View style={styles.card}>
+					<Text style={styles.favoriteTitle}>Household</Text>
+					<Text style={styles.householdBody}>Recipes and meal plans in this app are shared with {profile.householdName}.</Text>
+					<View style={styles.memberList}>
+						{householdMembers.map((member, index) => (
+							<View key={`household-${member}`} style={styles.memberChip}>
+								<Text style={styles.memberChipText}>{index === 0 ? `${member} (owner)` : member}</Text>
+							</View>
+						))}
 					</View>
 				</View>
 
@@ -193,7 +283,7 @@ const styles = StyleSheet.create({
 		justifyContent: 'space-between',
 		alignItems: 'flex-start',
 		paddingHorizontal: 24,
-		paddingTop: 70,
+		paddingTop: 20,
 		paddingBottom: 24,
 		borderBottomWidth: 1,
 		borderBottomColor: '#e5e7eb',
@@ -203,7 +293,7 @@ const styles = StyleSheet.create({
 		justifyContent: 'space-between',
 		alignItems: 'center',
 		paddingHorizontal: 16,
-		paddingTop: 70,
+		paddingTop: 20,
 		paddingBottom: 16,
 		borderBottomWidth: 1,
 		borderBottomColor: '#e5e7eb',
@@ -319,6 +409,14 @@ const styles = StyleSheet.create({
 		fontSize: 13,
 		lineHeight: 18,
 	},
+	householdText: {
+		marginTop: 4,
+		color: '#0077b6',
+		fontSize: 12,
+		fontWeight: '700',
+		textTransform: 'uppercase',
+		letterSpacing: 0.8,
+	},
 	editCard: {
 		borderRadius: 14,
 		backgroundColor: '#f9fafb',
@@ -347,6 +445,84 @@ const styles = StyleSheet.create({
 	bioInput: {
 		minHeight: 90,
 		textAlignVertical: 'top',
+	},
+	memberList: {
+		flexDirection: 'row',
+		flexWrap: 'wrap',
+		gap: 8,
+		marginTop: 10,
+	},
+	memberChip: {
+		flexDirection: 'row',
+		alignItems: 'center',
+		gap: 6,
+		paddingHorizontal: 10,
+		paddingVertical: 8,
+		borderRadius: 999,
+		backgroundColor: '#ffffff',
+		borderWidth: 1,
+		borderColor: '#d1d5db',
+	},
+	memberChipText: {
+		color: '#111111',
+		fontSize: 12,
+		fontWeight: '700',
+	},
+	disabledInput: {
+		opacity: 0.6,
+	},
+	memberRestrictionText: {
+		marginTop: 8,
+		color: '#6b7280',
+		fontSize: 12,
+		lineHeight: 18,
+	},
+	inviteCodeRow: {
+		marginTop: 2,
+		borderWidth: 1,
+		borderColor: '#d1d5db',
+		borderRadius: 10,
+		padding: 10,
+		backgroundColor: '#ffffff',
+		flexDirection: 'row',
+		alignItems: 'center',
+		justifyContent: 'space-between',
+		gap: 10,
+	},
+	inviteCodeValue: {
+		color: '#111111',
+		fontSize: 16,
+		fontWeight: '800',
+		letterSpacing: 1.2,
+	},
+	regenerateButton: {
+		borderRadius: 8,
+		paddingHorizontal: 10,
+		paddingVertical: 8,
+		backgroundColor: '#111111',
+	},
+	regenerateButtonText: {
+		color: '#ffffff',
+		fontSize: 12,
+		fontWeight: '700',
+		textTransform: 'uppercase',
+	},
+	inviteHint: {
+		marginTop: 8,
+		color: '#6b7280',
+		fontSize: 12,
+		lineHeight: 18,
+	},
+	addMemberButton: {
+		borderRadius: 10,
+		backgroundColor: '#111111',
+		paddingHorizontal: 14,
+		paddingVertical: 12,
+	},
+	addMemberButtonText: {
+		color: '#ffffff',
+		fontSize: 13,
+		fontWeight: '700',
 	},
 	eyebrow: {
 		color: '#0077b6',
@@ -399,6 +575,12 @@ const styles = StyleSheet.create({
 		fontSize: 14,
 		color: '#6b7280',
 		fontWeight: '600',
+	},
+	householdBody: {
+		marginTop: 8,
+		fontSize: 14,
+		lineHeight: 20,
+		color: '#6b7280',
 	},
 	emptyText: {
 		fontSize: 14,

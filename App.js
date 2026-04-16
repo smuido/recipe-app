@@ -19,7 +19,7 @@ import { MyRecipesScreen } from './src/screens/my-recipes';
 import { MyRecipeDetailScreen } from './src/screens/my-recipe-detail';
 import { PantryScreen } from './src/screens/pantry';
 import { ProfileScreen } from './src/screens/profile';
-import { MealPlannerScreen } from './src/screens/social';
+import { MealPlannerScreen } from './src/screens/planner';
 import { loadRecipeSections } from './src/services/recipes';
 
 const firstName = 'Sam';
@@ -31,6 +31,12 @@ const MEASURE_WORDS = new Set([
   'oz', 'ounce', 'ounces', 'lb', 'lbs', 'pound', 'pounds', 'g', 'kg', 'ml', 'l', 'clove', 'cloves',
   'slice', 'slices', 'can', 'cans', 'pack', 'packs', 'pinch', 'dash', 'small', 'medium', 'large',
 ]);
+
+function generateInviteCode() {
+  const charset = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const part = () => Array.from({ length: 4 }, () => charset[Math.floor(Math.random() * charset.length)]).join('');
+  return `${part()}-${part()}`;
+}
 
 function buildRecipeDetails(recipe) {
   const prepTimeFromMeta = Number.parseInt(String(recipe.meta ?? '').replace(/[^0-9]/g, ''), 10);
@@ -52,7 +58,7 @@ function buildRecipeDetails(recipe) {
   };
 }
 
-function buildCreatedRecipe(input, index) {
+function buildCreatedRecipe(input, index, ownerName) {
   const tone = FAVORITE_TONE_PALETTE[index % FAVORITE_TONE_PALETTE.length];
   const safeDescription = input.description || 'A fresh recipe from your own kitchen.';
 
@@ -67,10 +73,11 @@ function buildCreatedRecipe(input, index) {
     tags: ['Homemade', 'Shared'],
     ingredients: ['Ingredient list coming soon'],
     steps: ['Step details coming soon'],
+    createdBy: ownerName,
   };
 }
 
-function normalizeSavedRecipe(recipe, index) {
+function normalizeSavedRecipe(recipe, index, ownerName) {
   const parsedMinutes = Number.parseInt(String(recipe.meta ?? '').replace(/[^0-9]/g, ''), 10);
   const prepMinutes = Number.isFinite(parsedMinutes) ? parsedMinutes : 20;
 
@@ -89,6 +96,7 @@ function normalizeSavedRecipe(recipe, index) {
     steps: Array.isArray(recipe.steps) && recipe.steps.length > 0
       ? recipe.steps
       : ['Step details coming soon'],
+    createdBy: recipe.createdBy ?? ownerName,
   };
 }
 
@@ -171,11 +179,15 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('discover');
   const [createdRecipes, setCreatedRecipes] = useState([]);
   const [plannedMealsByDay, setPlannedMealsByDay] = useState(() => buildWeeklyPlan());
+  const [householdMembers, setHouseholdMembers] = useState(['Sam']);
+  const [householdInviteCode, setHouseholdInviteCode] = useState(() => generateInviteCode());
   const [profile, setProfile] = useState({
     name: 'Sam',
     bio: '',
     photoUrl: '',
     favoriteRecipeId: null,
+    householdName: 'Maple Street',
+    isHouseholdOwner: true,
   });
 
   const fetchSections = useCallback(async () => {
@@ -195,15 +207,15 @@ export default function App() {
 
   const handleAddRecipe = useCallback((input) => {
     setCreatedRecipes((currentRecipes) => {
-      const nextRecipe = buildCreatedRecipe(input, currentRecipes.length);
+      const nextRecipe = buildCreatedRecipe(input, currentRecipes.length, profile.name || 'Household member');
       return [nextRecipe, ...currentRecipes];
     });
     setActiveTab('myRecipes');
-  }, []);
+  }, [profile.name]);
 
   const handleSaveRecipeForLater = useCallback((recipe) => {
     setCreatedRecipes((currentRecipes) => {
-      const normalized = normalizeSavedRecipe(recipe, currentRecipes.length);
+      const normalized = normalizeSavedRecipe(recipe, currentRecipes.length, profile.name || 'Household member');
       const alreadySaved = currentRecipes.some((item) => item.id === normalized.id || item.title === normalized.title);
 
       if (alreadySaved) {
@@ -212,7 +224,7 @@ export default function App() {
 
       return [normalized, ...currentRecipes];
     });
-  }, []);
+  }, [profile.name]);
 
   const handleProfileChange = useCallback((nextValues) => {
     setProfile((current) => ({
@@ -220,7 +232,49 @@ export default function App() {
       name: nextValues.name,
       bio: nextValues.bio,
       photoUrl: nextValues.photoUrl,
+      householdName: current.isHouseholdOwner ? nextValues.householdName : current.householdName,
     }));
+
+    setHouseholdMembers((currentMembers) => {
+      if (currentMembers.length === 0) {
+        return [nextValues.name];
+      }
+
+      return [nextValues.name, ...currentMembers.slice(1)];
+    });
+  }, []);
+
+  const handleAcceptHouseholdInvite = useCallback((inviteCode, inviteeName) => {
+    const cleanCode = String(inviteCode).trim().toUpperCase();
+    const cleanName = String(inviteeName).trim();
+
+    if (!cleanName) {
+      return { ok: false, message: 'Add a name before accepting the invite.' };
+    }
+
+    if (cleanCode !== householdInviteCode) {
+      return { ok: false, message: 'That invite code is not valid for this household.' };
+    }
+
+    let added = false;
+    setHouseholdMembers((currentMembers) => {
+      if (currentMembers.some((member) => member.toLowerCase() === cleanName.toLowerCase())) {
+        return currentMembers;
+      }
+
+      added = true;
+      return [...currentMembers, cleanName];
+    });
+
+    if (!added) {
+      return { ok: false, message: `${cleanName} is already in this household.` };
+    }
+
+    return { ok: true, message: `${cleanName} joined ${profile.householdName}.` };
+  }, [householdInviteCode, profile.householdName]);
+
+  const handleRegenerateInviteCode = useCallback(() => {
+    setHouseholdInviteCode(generateInviteCode());
   }, []);
 
   const handleFavoriteRecipeChange = useCallback((recipeId) => {
@@ -230,16 +284,16 @@ export default function App() {
     }));
   }, []);
 
-  const handleAddMealToDay = useCallback((day, recipeId) => {
+  const handleAddMealToDay = useCallback((day, recipeId, plannedBy) => {
     setPlannedMealsByDay((currentPlan) => {
       const currentDayMeals = currentPlan[day] ?? [];
-      if (currentDayMeals.includes(recipeId)) {
+      if (currentDayMeals.some((entry) => entry.recipeId === recipeId)) {
         return currentPlan;
       }
 
       return {
         ...currentPlan,
-        [day]: [...currentDayMeals, recipeId],
+        [day]: [...currentDayMeals, { recipeId, plannedBy }],
       };
     });
   }, []);
@@ -247,7 +301,7 @@ export default function App() {
   const handleRemoveMealFromDay = useCallback((day, recipeId) => {
     setPlannedMealsByDay((currentPlan) => ({
       ...currentPlan,
-      [day]: (currentPlan[day] ?? []).filter((id) => id !== recipeId),
+      [day]: (currentPlan[day] ?? []).filter((entry) => entry.recipeId !== recipeId),
     }));
   }, []);
 
@@ -271,11 +325,11 @@ export default function App() {
       const nextPlan = {};
 
       DAY_ORDER.forEach((day) => {
-        const filtered = (currentPlan[day] ?? []).filter((recipeId) => validRecipeIds.has(recipeId));
-        if (filtered.length !== (currentPlan[day] ?? []).length) {
+        const filteredEntries = (currentPlan[day] ?? []).filter((entry) => validRecipeIds.has(entry.recipeId));
+        if (filteredEntries.length !== (currentPlan[day] ?? []).length) {
           changed = true;
         }
-        nextPlan[day] = filtered;
+        nextPlan[day] = filteredEntries;
       });
 
       return changed ? nextPlan : currentPlan;
@@ -287,7 +341,17 @@ export default function App() {
 
     return DAY_ORDER.reduce((result, day) => {
       result[day] = (plannedMealsByDay[day] ?? [])
-        .map((recipeId) => recipesById.get(recipeId))
+        .map((entry) => {
+          const recipe = recipesById.get(entry.recipeId);
+          if (!recipe) {
+            return null;
+          }
+
+          return {
+            ...recipe,
+            plannedBy: entry.plannedBy,
+          };
+        })
         .filter(Boolean);
       return result;
     }, {});
@@ -393,6 +457,8 @@ export default function App() {
     content = (
       <MealPlannerScreen
         dayOrder={DAY_ORDER}
+        householdName={profile.householdName}
+        householdMembers={householdMembers}
         recipes={createdRecipes}
         plannedMealsByDay={plannedRecipesByDay}
         onAddMealToDay={handleAddMealToDay}
@@ -420,8 +486,12 @@ export default function App() {
     content = (
       <ProfileScreen
         profile={profile}
+        householdMembers={householdMembers}
+        householdInviteCode={householdInviteCode}
         recipes={createdRecipes}
         onProfileChange={handleProfileChange}
+        onAcceptHouseholdInvite={handleAcceptHouseholdInvite}
+        onRegenerateInviteCode={handleRegenerateInviteCode}
         onFavoriteRecipeChange={handleFavoriteRecipeChange}
       />
     );
