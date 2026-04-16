@@ -1,20 +1,126 @@
 import { StatusBar } from 'expo-status-bar';
 import {
   ActivityIndicator,
+  Modal,
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
+import { BottomBar } from './src/componenets/bottom-bar';
 import { QUICK_FILTERS } from './src/data/mockRecipes';
+import { CreateRecipeScreen } from './src/screens/create-recipe';
+import { RecipePage } from './src/screens/recipe-page';
+import { MyRecipesScreen } from './src/screens/my-recipes';
+import { MyRecipeDetailScreen } from './src/screens/my-recipe-detail';
+import { PantryScreen } from './src/screens/pantry';
+import { ProfileScreen } from './src/screens/profile';
+import { MealPlannerScreen } from './src/screens/social';
 import { loadRecipeSections } from './src/services/recipes';
 
 const firstName = 'Sam';
 
-function RecipeSection({ title, subtitle, recipes }) {
+const FAVORITE_TONE_PALETTE = ['#00b3ff', '#7c83ff', '#ff7a59', '#34d399', '#b8ff3b'];
+const DAY_ORDER = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+const MEASURE_WORDS = new Set([
+  'cup', 'cups', 'tbsp', 'tbsps', 'tablespoon', 'tablespoons', 'tsp', 'tsps', 'teaspoon', 'teaspoons',
+  'oz', 'ounce', 'ounces', 'lb', 'lbs', 'pound', 'pounds', 'g', 'kg', 'ml', 'l', 'clove', 'cloves',
+  'slice', 'slices', 'can', 'cans', 'pack', 'packs', 'pinch', 'dash', 'small', 'medium', 'large',
+]);
+
+function buildRecipeDetails(recipe) {
+  const prepTimeFromMeta = Number.parseInt(String(recipe.meta ?? '').replace(/[^0-9]/g, ''), 10);
+  const prepTime = Number.isFinite(prepTimeFromMeta) ? prepTimeFromMeta : 15;
+
+  return {
+    id: recipe.id ?? recipe.title,
+    title: recipe.title,
+    image: recipe.image ?? 'https://images.unsplash.com/photo-1490645935967-10de6ba17061?auto=format&fit=crop&w=1600&q=80',
+    tags: Array.isArray(recipe.tags) && recipe.tags.length > 0 ? recipe.tags : ['Comfort', 'Dinner'],
+    prepTime,
+    cookTime: recipe.cookTime ?? Math.max(10, prepTime + 10),
+    ingredients: Array.isArray(recipe.ingredients) && recipe.ingredients.length > 0
+      ? recipe.ingredients
+      : ['2 tbsp olive oil', '2 cloves garlic', 'Salt and pepper to taste'],
+    steps: Array.isArray(recipe.steps) && recipe.steps.length > 0
+      ? recipe.steps
+      : ['Prep your ingredients.', 'Cook until aromatic and tender.', 'Taste, adjust seasoning, and serve warm.'],
+  };
+}
+
+function buildCreatedRecipe(input, index) {
+  const tone = FAVORITE_TONE_PALETTE[index % FAVORITE_TONE_PALETTE.length];
+  const safeDescription = input.description || 'A fresh recipe from your own kitchen.';
+
+  return {
+    id: `user-${Date.now()}-${index}`,
+    title: input.title,
+    meta: `${input.prepMinutes} min`,
+    accent: safeDescription,
+    tone,
+    prepTime: input.prepMinutes,
+    cookTime: Math.max(10, input.prepMinutes + 8),
+    tags: ['Homemade', 'Shared'],
+    ingredients: ['Ingredient list coming soon'],
+    steps: ['Step details coming soon'],
+  };
+}
+
+function normalizeSavedRecipe(recipe, index) {
+  const parsedMinutes = Number.parseInt(String(recipe.meta ?? '').replace(/[^0-9]/g, ''), 10);
+  const prepMinutes = Number.isFinite(parsedMinutes) ? parsedMinutes : 20;
+
+  return {
+    id: recipe.id ?? `saved-${String(recipe.title).toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+    title: recipe.title ?? 'Untitled recipe',
+    meta: recipe.meta ?? `${prepMinutes} min`,
+    accent: recipe.accent ?? 'Saved from Discover',
+    tone: recipe.tone ?? FAVORITE_TONE_PALETTE[index % FAVORITE_TONE_PALETTE.length],
+    prepTime: recipe.prepTime ?? prepMinutes,
+    cookTime: recipe.cookTime ?? Math.max(10, prepMinutes + 8),
+    tags: Array.isArray(recipe.tags) && recipe.tags.length > 0 ? recipe.tags : ['Saved'],
+    ingredients: Array.isArray(recipe.ingredients) && recipe.ingredients.length > 0
+      ? recipe.ingredients
+      : ['Ingredient list coming soon'],
+    steps: Array.isArray(recipe.steps) && recipe.steps.length > 0
+      ? recipe.steps
+      : ['Step details coming soon'],
+  };
+}
+
+function normalizeIngredientName(rawIngredient) {
+  if (!rawIngredient) {
+    return '';
+  }
+
+  const beforeComma = String(rawIngredient).toLowerCase().split(',')[0];
+  const cleaned = beforeComma
+    .replace(/\([^)]*\)/g, '')
+    .replace(/^[\d\s./-]+/, '')
+    .replace(/\b(of|to|taste)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const words = cleaned.split(' ').filter(Boolean);
+  while (words.length > 0 && MEASURE_WORDS.has(words[0])) {
+    words.shift();
+  }
+
+  return words.join(' ').trim();
+}
+
+function buildWeeklyPlan() {
+  return DAY_ORDER.reduce((result, day) => {
+    result[day] = [];
+    return result;
+  }, {});
+}
+
+function RecipeSection({ title, subtitle, recipes, onRecipePress, onSaveForLater }) {
   return (
     <View style={styles.section}>
       <View style={styles.sectionHeader}>
@@ -28,15 +134,27 @@ function RecipeSection({ title, subtitle, recipes }) {
         contentContainerStyle={styles.cardsRow}
       >
         {recipes.map((recipe) => (
-          <View key={recipe.title} style={styles.card}>
+          <TouchableOpacity
+            key={recipe.id ?? recipe.title}
+            style={styles.card}
+            activeOpacity={0.9}
+            onPress={() => onRecipePress(recipe)}
+          >
             <View style={[styles.cardGlow, { backgroundColor: recipe.tone }]} />
             <Text style={styles.cardMeta}>{recipe.meta}</Text>
             <Text style={styles.cardTitle}>{recipe.title}</Text>
             <Text style={styles.cardAccent}>{recipe.accent}</Text>
-            <View style={styles.cardPill}>
+            <TouchableOpacity
+              style={styles.cardPill}
+              activeOpacity={0.9}
+              onPress={(event) => {
+                event.stopPropagation();
+                onSaveForLater(recipe);
+              }}
+            >
               <Text style={styles.cardPillText}>Save for later</Text>
-            </View>
-          </View>
+            </TouchableOpacity>
+          </TouchableOpacity>
         ))}
       </ScrollView>
     </View>
@@ -48,6 +166,17 @@ export default function App() {
   const [dataSource, setDataSource] = useState('mock');
   const [sourceReason, setSourceReason] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [selectedRecipe, setSelectedRecipe] = useState(null);
+  const [selectedMyRecipe, setSelectedMyRecipe] = useState(null);
+  const [activeTab, setActiveTab] = useState('discover');
+  const [createdRecipes, setCreatedRecipes] = useState([]);
+  const [plannedMealsByDay, setPlannedMealsByDay] = useState(() => buildWeeklyPlan());
+  const [profile, setProfile] = useState({
+    name: 'Sam',
+    bio: '',
+    photoUrl: '',
+    favoriteRecipeId: null,
+  });
 
   const fetchSections = useCallback(async () => {
     setIsLoading(true);
@@ -64,8 +193,129 @@ export default function App() {
     fetchSections();
   }, [fetchSections]);
 
-  return (
-    <View style={styles.appShell}>
+  const handleAddRecipe = useCallback((input) => {
+    setCreatedRecipes((currentRecipes) => {
+      const nextRecipe = buildCreatedRecipe(input, currentRecipes.length);
+      return [nextRecipe, ...currentRecipes];
+    });
+    setActiveTab('myRecipes');
+  }, []);
+
+  const handleSaveRecipeForLater = useCallback((recipe) => {
+    setCreatedRecipes((currentRecipes) => {
+      const normalized = normalizeSavedRecipe(recipe, currentRecipes.length);
+      const alreadySaved = currentRecipes.some((item) => item.id === normalized.id || item.title === normalized.title);
+
+      if (alreadySaved) {
+        return currentRecipes;
+      }
+
+      return [normalized, ...currentRecipes];
+    });
+  }, []);
+
+  const handleProfileChange = useCallback((nextValues) => {
+    setProfile((current) => ({
+      ...current,
+      name: nextValues.name,
+      bio: nextValues.bio,
+      photoUrl: nextValues.photoUrl,
+    }));
+  }, []);
+
+  const handleFavoriteRecipeChange = useCallback((recipeId) => {
+    setProfile((current) => ({
+      ...current,
+      favoriteRecipeId: recipeId,
+    }));
+  }, []);
+
+  const handleAddMealToDay = useCallback((day, recipeId) => {
+    setPlannedMealsByDay((currentPlan) => {
+      const currentDayMeals = currentPlan[day] ?? [];
+      if (currentDayMeals.includes(recipeId)) {
+        return currentPlan;
+      }
+
+      return {
+        ...currentPlan,
+        [day]: [...currentDayMeals, recipeId],
+      };
+    });
+  }, []);
+
+  const handleRemoveMealFromDay = useCallback((day, recipeId) => {
+    setPlannedMealsByDay((currentPlan) => ({
+      ...currentPlan,
+      [day]: (currentPlan[day] ?? []).filter((id) => id !== recipeId),
+    }));
+  }, []);
+
+  useEffect(() => {
+    if (!profile.favoriteRecipeId) {
+      return;
+    }
+
+    const stillExists = createdRecipes.some((recipe) => recipe.id === profile.favoriteRecipeId);
+
+    if (!stillExists) {
+      setProfile((current) => ({ ...current, favoriteRecipeId: null }));
+    }
+  }, [createdRecipes, profile.favoriteRecipeId]);
+
+  useEffect(() => {
+    const validRecipeIds = new Set(createdRecipes.map((recipe) => recipe.id));
+
+    setPlannedMealsByDay((currentPlan) => {
+      let changed = false;
+      const nextPlan = {};
+
+      DAY_ORDER.forEach((day) => {
+        const filtered = (currentPlan[day] ?? []).filter((recipeId) => validRecipeIds.has(recipeId));
+        if (filtered.length !== (currentPlan[day] ?? []).length) {
+          changed = true;
+        }
+        nextPlan[day] = filtered;
+      });
+
+      return changed ? nextPlan : currentPlan;
+    });
+  }, [createdRecipes]);
+
+  const plannedRecipesByDay = useMemo(() => {
+    const recipesById = new Map(createdRecipes.map((recipe) => [recipe.id, recipe]));
+
+    return DAY_ORDER.reduce((result, day) => {
+      result[day] = (plannedMealsByDay[day] ?? [])
+        .map((recipeId) => recipesById.get(recipeId))
+        .filter(Boolean);
+      return result;
+    }, {});
+  }, [createdRecipes, plannedMealsByDay]);
+
+  const shoppingItems = useMemo(() => {
+    const ingredientCounts = new Map();
+
+    DAY_ORDER.forEach((day) => {
+      (plannedRecipesByDay[day] ?? []).forEach((recipe) => {
+        const ingredients = Array.isArray(recipe.ingredients) ? recipe.ingredients : [];
+        ingredients.forEach((ingredient) => {
+          const normalized = normalizeIngredientName(ingredient);
+          if (!normalized) {
+            return;
+          }
+          ingredientCounts.set(normalized, (ingredientCounts.get(normalized) ?? 0) + 1);
+        });
+      });
+    });
+
+    return Array.from(ingredientCounts.entries())
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [plannedRecipesByDay]);
+
+  const renderHomeScreen = () => (
+    <>
       <StatusBar style="dark" />
       <View style={styles.backgroundOrbOne} />
       <View style={styles.backgroundOrbTwo} />
@@ -111,7 +361,7 @@ export default function App() {
 
         {isLoading ? (
           <View style={styles.loadingWrap}>
-            <ActivityIndicator size="large" color="#7f5035" />
+            <ActivityIndicator size="large" color="#111111" />
             <Text style={styles.loadingText}>Loading recipe feed...</Text>
           </View>
         ) : null}
@@ -129,17 +379,102 @@ export default function App() {
             title={section.title}
             subtitle={section.subtitle}
             recipes={section.recipes}
+            onRecipePress={(recipe) => setSelectedRecipe(buildRecipeDetails(recipe))}
+            onSaveForLater={handleSaveRecipeForLater}
           />
         ))}
       </ScrollView>
-    </View>
+    </>
+  );
+
+  let content = null;
+
+  if (activeTab === 'social') {
+    content = (
+      <MealPlannerScreen
+        dayOrder={DAY_ORDER}
+        recipes={createdRecipes}
+        plannedMealsByDay={plannedRecipesByDay}
+        onAddMealToDay={handleAddMealToDay}
+        onRemoveMealFromDay={handleRemoveMealFromDay}
+      />
+    );
+  } else if (activeTab === 'myRecipes') {
+    content = selectedMyRecipe ? (
+      <MyRecipeDetailScreen
+        recipe={selectedMyRecipe}
+        onBack={() => setSelectedMyRecipe(null)}
+      />
+    ) : (
+      <MyRecipesScreen
+        recipes={createdRecipes}
+        favoriteRecipeId={profile.favoriteRecipeId}
+        onRecipePress={(recipe) => setSelectedMyRecipe(recipe)}
+      />
+    );
+  } else if (activeTab === 'createRecipe') {
+    content = <CreateRecipeScreen onAddRecipe={handleAddRecipe} />;
+  } else if (activeTab === 'pantry') {
+    content = <PantryScreen shoppingItems={shoppingItems} />;
+  } else if (activeTab === 'profile') {
+    content = (
+      <ProfileScreen
+        profile={profile}
+        recipes={createdRecipes}
+        onProfileChange={handleProfileChange}
+        onFavoriteRecipeChange={handleFavoriteRecipeChange}
+      />
+    );
+  } else {
+    content = renderHomeScreen();
+  }
+
+  return (
+    <SafeAreaProvider>
+      <SafeAreaView style={styles.appShell} edges={['top', 'left', 'right']}>
+        <View style={styles.mainArea}>{content}</View>
+
+      <BottomBar
+        activeTab={activeTab}
+        onTabPress={(tab) => {
+          setSelectedMyRecipe(null);
+          setActiveTab(tab);
+        }}
+        onCenterActionPress={(tab) => {
+          setSelectedMyRecipe(null);
+          setActiveTab(tab);
+        }}
+      />
+
+        <Modal
+          visible={Boolean(selectedRecipe)}
+          animationType="fade"
+          transparent
+          statusBarTranslucent
+          navigationBarTranslucent
+          onRequestClose={() => setSelectedRecipe(null)}
+        >
+          {selectedRecipe ? (
+            <RecipePage
+              recipe={selectedRecipe}
+              onClose={() => setSelectedRecipe(null)}
+              onSaveForLater={() => handleSaveRecipeForLater(selectedRecipe)}
+            />
+          ) : null}
+        </Modal>
+      </SafeAreaView>
+    </SafeAreaProvider>
   );
 }
 
 const styles = StyleSheet.create({
   appShell: {
     flex: 1,
-    backgroundColor: '#f6efe6',
+    backgroundColor: '#ffffff',
+  },
+  mainArea: {
+    flex: 1,
+    paddingBottom: 94,
   },
   screen: {
     flex: 1,
@@ -156,8 +491,8 @@ const styles = StyleSheet.create({
     width: 210,
     height: 210,
     borderRadius: 999,
-    backgroundColor: '#f3c9a7',
-    opacity: 0.45,
+    backgroundColor: '#d8f2ff',
+    opacity: 0.9,
   },
   backgroundOrbTwo: {
     position: 'absolute',
@@ -166,38 +501,40 @@ const styles = StyleSheet.create({
     width: 180,
     height: 180,
     borderRadius: 999,
-    backgroundColor: '#d9e2c5',
-    opacity: 0.4,
+    backgroundColor: '#e8ecff',
+    opacity: 0.85,
   },
   heroCard: {
     marginHorizontal: 20,
     paddingHorizontal: 22,
     paddingVertical: 24,
     borderRadius: 28,
-    backgroundColor: '#fffaf4',
-    shadowColor: '#72452b',
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#e6e7eb',
+    shadowColor: '#000000',
     shadowOffset: { width: 0, height: 14 },
-    shadowOpacity: 0.12,
+    shadowOpacity: 0.08,
     shadowRadius: 24,
     elevation: 4,
   },
   heroEyebrow: {
     marginBottom: 10,
-    color: '#a05a36',
+    color: '#0077b6',
     fontSize: 13,
     fontWeight: '700',
     letterSpacing: 1.4,
     textTransform: 'uppercase',
   },
   heroTitle: {
-    color: '#2f241d',
+    color: '#111111',
     fontSize: 34,
     lineHeight: 40,
     fontWeight: '800',
   },
   heroCopy: {
     marginTop: 14,
-    color: '#655146',
+    color: '#5f6368',
     fontSize: 16,
     lineHeight: 24,
   },
@@ -210,12 +547,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 999,
-    backgroundColor: '#f2dfce',
+    backgroundColor: '#f6f7f9',
     borderWidth: 1,
-    borderColor: '#e8c7ae',
+    borderColor: '#e6e7eb',
   },
   filterChipText: {
-    color: '#7f5035',
+    color: '#111111',
     fontSize: 14,
     fontWeight: '700',
   },
@@ -226,7 +563,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   sourceBadgeLabel: {
-    color: '#886a59',
+    color: '#5f6368',
     fontSize: 13,
     fontWeight: '600',
   },
@@ -236,20 +573,20 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   sourceBadgeMock: {
-    backgroundColor: '#f2dfce',
+    backgroundColor: '#f3f4f6',
   },
   sourceBadgeLive: {
-    backgroundColor: '#d8e7cb',
+    backgroundColor: '#e6f7ff',
   },
   sourceBadgeText: {
-    color: '#6a4733',
+    color: '#111111',
     fontSize: 12,
     fontWeight: '700',
     letterSpacing: 0.2,
   },
   sourceReasonText: {
     marginTop: 10,
-    color: '#8a6653',
+    color: '#6b7280',
     fontSize: 13,
     lineHeight: 18,
   },
@@ -257,12 +594,12 @@ const styles = StyleSheet.create({
     marginTop: 14,
     alignSelf: 'flex-start',
     borderRadius: 999,
-    backgroundColor: '#2f241d',
+    backgroundColor: '#111111',
     paddingHorizontal: 14,
     paddingVertical: 10,
   },
   refreshButtonText: {
-    color: '#fff8f1',
+    color: '#ffffff',
     fontSize: 13,
     fontWeight: '700',
   },
@@ -274,12 +611,12 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   sectionTitle: {
-    color: '#2f241d',
+    color: '#111111',
     fontSize: 24,
     fontWeight: '800',
   },
   sectionSubtitle: {
-    color: '#6d5b50',
+    color: '#6b7280',
     fontSize: 15,
     lineHeight: 22,
   },
@@ -293,9 +630,9 @@ const styles = StyleSheet.create({
     minHeight: 220,
     padding: 18,
     borderRadius: 24,
-    backgroundColor: '#fffaf4',
+    backgroundColor: '#ffffff',
     borderWidth: 1,
-    borderColor: '#f1dcc8',
+    borderColor: '#e6e7eb',
     overflow: 'hidden',
   },
   cardGlow: {
@@ -309,21 +646,21 @@ const styles = StyleSheet.create({
   },
   cardMeta: {
     marginBottom: 28,
-    color: '#8d644d',
+    color: '#6b7280',
     fontSize: 12,
     fontWeight: '700',
     letterSpacing: 1.1,
     textTransform: 'uppercase',
   },
   cardTitle: {
-    color: '#2f241d',
+    color: '#111111',
     fontSize: 22,
     lineHeight: 28,
     fontWeight: '800',
   },
   cardAccent: {
     marginTop: 10,
-    color: '#675247',
+    color: '#4b5563',
     fontSize: 15,
     lineHeight: 22,
   },
@@ -333,10 +670,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 9,
     borderRadius: 999,
-    backgroundColor: '#2f241d',
+    backgroundColor: '#111111',
   },
   cardPillText: {
-    color: '#fff8f1',
+    color: '#ffffff',
     fontSize: 13,
     fontWeight: '700',
   },
@@ -348,7 +685,7 @@ const styles = StyleSheet.create({
     paddingVertical: 30,
   },
   loadingText: {
-    color: '#7f5c49',
+    color: '#6b7280',
     fontSize: 14,
     fontWeight: '600',
   },
@@ -356,18 +693,18 @@ const styles = StyleSheet.create({
     marginHorizontal: 20,
     borderRadius: 20,
     padding: 18,
-    backgroundColor: '#fff5ea',
+    backgroundColor: '#f8fafc',
     borderWidth: 1,
-    borderColor: '#f0ddca',
+    borderColor: '#e6e7eb',
     gap: 6,
   },
   emptyTitle: {
-    color: '#2f241d',
+    color: '#111111',
     fontSize: 18,
     fontWeight: '800',
   },
   emptyBody: {
-    color: '#6d5b50',
+    color: '#4b5563',
     fontSize: 14,
     lineHeight: 21,
   },
